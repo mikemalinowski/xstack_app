@@ -2,8 +2,6 @@ import os
 import qtility
 import xstack
 
-from Qt import QtWidgets
-
 from .config import AppConfig
 from .application import AppWindow
 
@@ -24,7 +22,7 @@ class DemoAppConfig(AppConfig):
 
 # --------------------------------------------------------------------------------------
 # noinspection PyUnresolvedReferences,PyUnusedLocal
-def launch_demo(blocking: bool = True):
+def launch_demo(blocking: bool = True, load_file: str = None, run_on_launch: bool = False):
     """
     This function should be called to invoke the app ui in demonstration
     mode, which exposes all the components used by xstacks unit tests.
@@ -33,6 +31,12 @@ def launch_demo(blocking: bool = True):
 
     w = AppWindow(app_config=DemoAppConfig)
     w.show()
+
+    if load_file:
+        w.core.import_stack(filepath=load_file, silent=True)
+
+    if run_on_launch and w.core.stack:
+        w.core.build()
 
     if blocking:
         q_app.exec_()

@@ -8,6 +8,7 @@ from . import options
 from . import config
 from . import tree
 from . import settings
+from . import runner
 
 
 # --------------------------------------------------------------------------------------
@@ -22,14 +23,19 @@ class AppWidget(QtWidgets.QWidget):
             use this to tailor how this application presents information and terminology
     """
 
+    build_started = QtCore.Signal()
+    build_complete = QtCore.Signal()
+
     # ----------------------------------------------------------------------------------
-    def __init__(self, app_config=None, parent: QtWidgets.QWidget = None):
+    def __init__(self, app_config=None, allow_threading=True, parent: QtWidgets.QWidget = None):
         super(AppWidget, self).__init__(parent=parent)
 
         self.settings_id = "xstack_app"
 
         # -- Store the stack
         self.stack = None
+        self.allow_threading = allow_threading
+        self.run_thread = None
 
         # -- Store the app config
         self.app_config = app_config or config.AppConfig
@@ -41,6 +47,9 @@ class AppWidget(QtWidgets.QWidget):
 
         # -- These are for our menu system
         self.menu_bar = None
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setVisible(False)
 
         # -- Set the layout
         self.setLayout(
@@ -54,6 +63,64 @@ class AppWidget(QtWidgets.QWidget):
 
         # -- Construct the menu on startup
         self.build_menu()
+
+        self.build_started.connect(self.on_build_started)
+        self.build_complete.connect(self.on_build_complete)
+
+    def build(self, build_below=None, validate_only=False):
+        """
+        This will trigger a threaded build of the stack
+
+        Args:
+            build_below: This will trigger a build of only components within this
+                component and below
+            validate_only: This will trigger a validation pass only
+        """
+        self.build_started.emit()
+        if self.allow_threading:
+            self.run_thread = runner.ThreadedRun(
+                stack=self.stack,
+                build_below=build_below,
+                validate_only=validate_only,
+            )
+            self.run_thread.build_progressed.connect(self.update_progressbar)
+            self.run_thread.finished.connect(self.build_complete.emit)
+            self.run_thread.start()
+
+        else:
+            self.stack.build_progressed.connect(self.update_progressbar)
+            self.stack.build(
+                build_below=build_below,
+                validate_only=validate_only,
+            )
+            self.build_complete.emit()
+
+    def update_progressbar(self, percentage):
+        """
+        This will update the progress bar value with the given percentage
+
+        Args:
+            percentage: The percentage value to update
+        """
+        self.progress_bar.setValue(percentage)
+        self.progress_bar.setFormat(f"Running : {int(percentage)}%")
+
+    def on_build_started(self):
+        """
+        This event is called with the build of the stack is initiated.
+        """
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.menu_bar.setEnabled(False)
+        self.editor_widget.setVisible(False)
+
+    def on_build_complete(self):
+        """
+        This event is called when the build is complete
+        """
+        self.progress_bar.setVisible(False)
+        self.menu_bar.setEnabled(True)
+        self.editor_widget.setVisible(True)
 
     # ----------------------------------------------------------------------------------
     def add_splash(self):
@@ -194,21 +261,27 @@ class AppWidget(QtWidgets.QWidget):
             self.layout(),
         )
 
-        self.splitter = QtWidgets.QSplitter()
-        self.layout().addWidget(self.splitter)
+        self.flexible_layout = QtWidgets.QVBoxLayout()
+        self.layout().addLayout(self.flexible_layout)
 
-        self.tree_widget = tree.BuildTreeWidget(self.stack, self.app_config, parent=self)
+        self.splitter = QtWidgets.QSplitter()
+        self.flexible_layout.addWidget(self.splitter)
+
+        self.tree_widget = tree.BuildTreeWidget(self.stack, self.app_config, app=self)
         self.splitter.addWidget(self.tree_widget)
         self.tree_widget.currentItemChanged.connect(self.propogate_component_selection)
 
         self.editor_widget = options.ComponentEditor(parent=self)
         self.splitter.addWidget(self.editor_widget)
 
-        self.layout().setStretch(0, 1)
-        self.layout().setStretch(1, 0)
+        self.flexible_layout.setStretch(0, 1)
+        self.flexible_layout.setStretch(1, 0)
 
         self.set_layout_orientation()
 
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.layout().addWidget(self.progress_bar)
+        
     # ----------------------------------------------------------------------------------
     def set_layout_orientation(self):
         """
@@ -240,10 +313,10 @@ class AppWidget(QtWidgets.QWidget):
             use_horizontal_alignment = False
 
         if use_horizontal_alignment:
-            self.layout().setDirection(QtWidgets.QBoxLayout.LeftToRight)
+            self.flexible_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
             self.splitter.setOrientation(QtCore.Qt.Horizontal)
         else:
-            self.layout().setDirection(QtWidgets.QBoxLayout.TopToBottom)
+            self.flexible_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
             self.splitter.setOrientation(QtCore.Qt.Vertical)
 
     # ----------------------------------------------------------------------------------
@@ -275,31 +348,33 @@ class AppWidget(QtWidgets.QWidget):
         return new_stack
 
     # ----------------------------------------------------------------------------------
-    def import_stack(self):
+    def import_stack(self, filepath=None, silent=False):
         """
         This defines the user flow for importing stack data
         """
 
         stack_label = self.app_config.label
 
-        confirmation = qtility.request.confirmation(
-            title=f"Import {stack_label}",
-            message=(
-                f"Importing a {stack_label} will clear any current {stack_label} data. "
-                "Are you sure you want to continue?"
-            ),
-            parent=self,
-        )
+        if not silent:
+            confirmation = qtility.request.confirmation(
+                title=f"Import {stack_label}",
+                message=(
+                    f"Importing a {stack_label} will clear any current {stack_label} data. "
+                    "Are you sure you want to continue?"
+                ),
+                parent=self,
+            )
 
-        if not confirmation:
-            return
+            if not confirmation:
+                return
 
-        filepath = qtility.request.filepath(
-            title=f"Import {stack_label}",
-            filter_="*.json (*.json)",
-            parent=self,
-            save=False,
-        )
+        if not filepath:
+            filepath = qtility.request.filepath(
+                title=f"Import {stack_label}",
+                filter_="*.json (*.json)",
+                parent=self,
+                save=False,
+            )
 
         new_stack = self.app_config.stack_class.load(
             data=filepath,
@@ -323,7 +398,7 @@ class AppWidget(QtWidgets.QWidget):
             save=True,
             parent=self,
         )
-        print("setting to save to : %s" % filepath)
+
         self.stack.save(
             filepath,
             additional_data=additional_data,
@@ -355,7 +430,7 @@ class AppWidget(QtWidgets.QWidget):
 # noinspection PyUnresolvedReferences
 class AppWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, app_config=None, *args, **kwargs):
+    def __init__(self, app_config=None, allow_threading=True, *args, **kwargs):
         super(AppWindow, self).__init__(*args, **kwargs)
 
         self.app_config = app_config or config.AppConfig
@@ -391,25 +466,30 @@ class AppWindow(QtWidgets.QMainWindow):
         )
 
         widget = self.app_config.app_widget or AppWidget
-
-        self.setCentralWidget(
-            widget(
-                app_config=app_config,
-                parent=self,
-            ),
+        self.core = widget(
+            app_config=app_config,
+            allow_threading=allow_threading,
+            parent=self,
         )
+        self.setCentralWidget(self.core)
 
 
 # ------------------------------------------------------------------------------
 # noinspection PyUnresolvedReferences,PyUnusedLocal
-def launch(app_config=None, blocking: bool = True, *args, **kwargs):
+def launch(app_config=None, blocking: bool = True, load_file: str = None, run_on_launch: bool = False, allow_threading=True, *args, **kwargs):
     """
     This function should be called to invoke the app ui
     """
     q_app = QtWidgets.qApp()
 
-    w = AppWindow(app_config=app_config, *args, **kwargs)
+    w = AppWindow(app_config=app_config, allow_threading=allow_threading, *args, **kwargs)
     w.show()
+
+    if load_file:
+        self.core.import_stack(filepath=load_file, silent=True)
+
+    if run_on_launch and self.core.stack:
+        self.core.build()
 
     if blocking:
         q_app.exec_()

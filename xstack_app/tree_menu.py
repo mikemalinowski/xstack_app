@@ -1,12 +1,11 @@
-import qtility
 import functools
 import collections
 
-from Qt import QtWidgets, QtGui
+from Qt import QtWidgets, QtGui, QtCore
 
 
 # --------------------------------------------------------------------------------------
-def construct(menu_dict, icon_dict, tree_item, app_config, stack):
+def construct(menu_dict, icon_dict, tree_item, app_config, stack, app, parent):
 
     construct_defaults(menu_dict, icon_dict, app_config)
 
@@ -17,6 +16,8 @@ def construct(menu_dict, icon_dict, tree_item, app_config, stack):
             menu_dict=menu_dict,
             icon_map=icon_dict,
             app_config=app_config,
+            app=app,
+            parent=parent,
         )
 
     else:
@@ -26,6 +27,8 @@ def construct(menu_dict, icon_dict, tree_item, app_config, stack):
             menu_dict=menu_dict,
             icon_map=icon_dict,
             app_config=app_config,
+            app=app,
+            parent=parent,
         )
 
 
@@ -69,6 +72,8 @@ def construct_blank_selection_menu(
         menu_dict: collections.OrderedDict[str, callable],
         icon_map: dict,
         app_config,
+        app,
+        parent,
 ):
     if not item:
         return
@@ -90,8 +95,9 @@ def construct_blank_selection_menu(
 
         menu_dict[execute_type][
             f"{execute_type} {app_config.label}"] = functools.partial(
-            stack.build,
-            validate_only=validate_only,
+            app.build,
+            None,
+            validate_only,
         )
         icon_map[f"{execute_type} {app_config.label}"] = icon_to_use
 
@@ -111,6 +117,8 @@ def construct_component_menu(
         menu_dict: collections.OrderedDict[str, callable],
         icon_map: dict,
         app_config,
+        app,
+        parent,
 ):
     # -- Get the tree widget
     tree = item.treeWidget()
@@ -134,10 +142,17 @@ def construct_component_menu(
         validate_only = execute_type == "Validate"
         icon_to_use = validate_icon if validate_only else execute_icon
 
+        # threaded_runner = ThreadedRun(
+        #     stack=component.stack,
+        #     build_below=component.uuid(),
+        #     validate_only=validate_only,
+        #     parent=parent,
+        # )
+
         menu_dict[execute_type][f"{execute_type} Section"] = functools.partial(
-            component.stack.build,
-            build_below=component.uuid(),
-            validate_only=validate_only,
+            app.build,
+            component.uuid(),
+            validate_only,
         )
 
         _add_separator(menu_dict[execute_type])

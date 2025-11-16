@@ -19,11 +19,13 @@ class BuildTreeWidget(QtWidgets.QTreeWidget):
     """
 
     # ----------------------------------------------------------------------------------
-    def __init__(self, stack: "xstack.Stack", app_config, parent: QtWidgets.QWidget = None):
-        super(BuildTreeWidget, self).__init__(parent=parent)
+    def __init__(self, stack: "xstack.Stack", app_config, app: QtWidgets.QWidget = None):
+        super(BuildTreeWidget, self).__init__(parent=app)
 
+        self.app = app
         self.app_config = app_config
         self.add_component_window = None
+        self.allow_interaction = True
 
         # -- Declare the settings to allow us to correctly handle drag and
         # -- drop events
@@ -57,6 +59,9 @@ class BuildTreeWidget(QtWidgets.QTreeWidget):
         # -- This is where we store a mapping of uuid's to widgetitems
         self._item_lookup = dict()
 
+        # -- Tracker for if we're building
+        self.is_building = False
+
         if self.app_config.stack_background:
 
             path = self.app_config.stack_background.replace("\\", "/")
@@ -77,6 +82,21 @@ class BuildTreeWidget(QtWidgets.QTreeWidget):
         self.stack.changed.connect(
             self.populate,
         )
+        self.app.build_started.connect(self.disable_interaction)
+        # self.stack.build_started.connect(self.disable_interaction)
+        self.app.build_complete.connect(self.enable_interaction)
+        # self.stack.build_completed.connect(self.enable_interaction)
+        self.stack.build_progressed.connect(self.on_build_updated)
+
+    # ----------------------------------------------------------------------------------
+    def disable_interaction(self):
+        self.allow_interaction = False
+
+    def enable_interaction(self):
+        self.allow_interaction = True
+
+    def on_build_updated(self, *args, **kwargs):
+        self.viewport().update()
 
     # ----------------------------------------------------------------------------------
     def populate(self):
@@ -248,6 +268,9 @@ class BuildTreeWidget(QtWidgets.QTreeWidget):
         """
         super(BuildTreeWidget, self).mousePressEvent(event)
 
+        if not self.allow_interaction:
+            return
+
         if event.button() != QtCore.Qt.RightButton:
             return
 
@@ -262,6 +285,8 @@ class BuildTreeWidget(QtWidgets.QTreeWidget):
             selected_item,
             self.app_config,
             self.stack,
+            self.app,
+            parent=self,
         )
 
         menu = qtility.menus.create(
